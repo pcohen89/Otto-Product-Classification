@@ -8,6 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 import pandas as pd
 import numpy as np
 from functools import partial
+import os
 
 def split_num_str(df):
     """ This data seprates numeric columns from str columns """
@@ -43,15 +44,31 @@ def rename_col_position(df, new_name, position):
     # resaves the columns names
     df.columns = out_cols
     return df
+    
+def hicorrel(df, threshold=.7):
+    """ 
+    Used to evaluate a correlation matrix to see if values above threshold
+    """
+    # Overwrite perfect correlation with self
+    if len(df[df==1])==1:
+        df[df==1] = 0
+    # if two columns are perfectly correlated, raise error
+    else:
+        raise Exception("Two perfectly correlated columns")
+    df_abs = np.abs(df)
+    max_val = df_abs.max()
+    return max_val > threshold
    
 def num_describe(df):
     """ 
-    This funciton takes a dataframe and evaluates percentiles, missings,
+    This function takes a dataframe and evaluates percentiles, missings,
     outliers and unique values. Outputs a dataframe that stores results
     Note: df must be numeric only
     """
+    df['one'] = 1
     # Create a gauranteed non-missing column to compare to other 
     df_output = df.describe().transpose().reset_index()
+    # create a one column
     # Store X.one as one of the arguments to compare_colcount
     miss_count = partial(compare_colcount, df.one)
     # Create vector of fucntions to apply
@@ -68,8 +85,7 @@ def num_describe(df):
     # rename index to 'column'
     df_output = rename_col_position(df_output, 'column', 0)
     return df_output
-
-   
+  
 def detailed_describe(df, outpath, name, target=""):
     """ This will export summaries of a data set
     
@@ -101,12 +117,20 @@ def detailed_describe(df, outpath, name, target=""):
     # summarize numeric features
     df_output = num_describe(X_num)
     # export summary
-    df_output.to_csv(outpath + name + ' numeric summary.csv', index=False)
+    #df_output.to_csv(outpath + name + ' numeric summary.csv', index=False)
     # create correlation table
     df_correl = X_num.corr()
-    
-
-        
+    # store rows and columns with high correlation values
+    df_hicorr_cols = df_correl.apply(hicorrel, axis=0)
+    df_hicorr_rows = df_correl.apply(hicorrel, axis=1)
+    # take subsample of corr table with only high corr columns and rows
+    df_correl_zoomin = df_correl.ix[df_hicorr_rows, df_hicorr_cols]
+    out_correl = outpath + "correlations/"
+    if not os.path.exists(out_correl):
+        os.makedirs(out_correl)
+    df_correl.to_csv(out_correl + "all correlations.csv", index=False)
+    df_correl_zoomin.to_csv(out_correl + "high correlations.csv", index=False)
+       
 path = "S:/03 Internal - Current/Kaggle/Otto Group Product Classification" 
 path2 = "/Structured Data/05 Data Documentation/" 
 outpath = path + path2       
