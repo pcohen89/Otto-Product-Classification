@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from functools import partial
 import os
+import matplotlib.pyplot as plt
 
 def split_num_str(df):
     """ This data seprates numeric columns from str columns """
@@ -58,7 +59,7 @@ def hicorrel(df, threshold=.7):
     df_abs = np.abs(df)
     max_val = df_abs.max()
     return max_val > threshold
-   
+
 def num_describe(df):
     """ 
     This function takes a dataframe and evaluates percentiles, missings,
@@ -84,7 +85,53 @@ def num_describe(df):
         df_output = df_output.merge(df_new_stat, how='outer')      
     # rename index to 'column'
     df_output = rename_col_position(df_output, 'column', 0)
+    # drop 'one' column stats
+    df_output = df_output[df_output.column != 'one']
     return df_output
+    
+def correl_describe(df, outpath, nm):
+    """ 
+    Calculates the correlation between numeric columns and outputs both
+    a full correlation table and a small table that focuses on features with
+    high correlations
+    """
+    if len(df.columns) != len(df._get_numeric_data().columns):
+        raise TypeError("Please, use only numeric data with correl_describe")
+    # create correlation table
+    df_correl = df.corr()
+    # store rows and columns with high correlation values
+    df_hicorr_cols = df_correl.apply(hicorrel, axis=0)
+    df_hicorr_rows = df_correl.apply(hicorrel, axis=1)
+    # take subsample of corr table with only high corr columns and rows
+    df_correl_zoomin = df_correl.ix[df_hicorr_rows, df_hicorr_cols]
+    out_correl = outpath + "correlations/"
+    # make corrrelations sub directory if one does not exist
+    if not os.path.exists(out_correl):
+        os.makedirs(out_correl)
+    # save both raw and zoomed in correlations in sub directory
+    df_correl.to_csv(out_correl + str(nm) + "all correl.csv", index=False)
+    df_correl_zoomin.to_csv(out_correl + str(nm) + "high correl.csv",
+                            index=False)
+
+def draw_dists(series, path):
+    """ Create charts and save them """
+    plt.hist(series, 10)
+    plt.show()
+    
+     
+def chart_feats(df, outpath, name):
+    """ Charts the distributions of numeric features """
+    if len(df.columns) != len(df._get_numeric_data().columns):
+        raise TypeError("Please, use only numeric data with chart_feats")
+    # create path for distributions
+    out_dist_pth = outpath + "distributions/"
+    # make corrrelations sub directory if one does not exist
+    if not os.path.exists(out_dist_pth):
+        os.makedirs(out_dist_pth)
+    
+        
+    
+    
   
 def detailed_describe(df, outpath, name, target=""):
     """ This will export summaries of a data set
@@ -102,11 +149,11 @@ def detailed_describe(df, outpath, name, target=""):
     specified, which will skip certain steps
         
     """
-    if target:
-        X = df
-    else:
+    if target != "":
         y = df[target]
-        X = df.ix[:, (df.columns.values != target)]
+        X = df.ix[:, (df.columns.values != target)]  
+    else:
+        X = df   
     # Print most basic features of the data 
     print "Obs in " + name + ": " + str(X.iloc[:, 0].count())
     print "Cols in " + name + ": " + str(X.iloc[0, :].count())
@@ -117,23 +164,18 @@ def detailed_describe(df, outpath, name, target=""):
     # summarize numeric features
     df_output = num_describe(X_num)
     # export summary
-    #df_output.to_csv(outpath + name + ' numeric summary.csv', index=False)
-    # create correlation table
-    df_correl = X_num.corr()
-    # store rows and columns with high correlation values
-    df_hicorr_cols = df_correl.apply(hicorrel, axis=0)
-    df_hicorr_rows = df_correl.apply(hicorrel, axis=1)
-    # take subsample of corr table with only high corr columns and rows
-    df_correl_zoomin = df_correl.ix[df_hicorr_rows, df_hicorr_cols]
-    out_correl = outpath + "correlations/"
-    if not os.path.exists(out_correl):
-        os.makedirs(out_correl)
-    df_correl.to_csv(out_correl + "all correlations.csv", index=False)
-    df_correl_zoomin.to_csv(out_correl + "high correlations.csv", index=False)
-       
+    df_output.to_csv(outpath + name + ' numeric summary.csv', index=False)
+    # Analyze correlations
+    correl_describe(df, outpath, name)
+    # Chart variable distributions
+    chart_feats(df, outpath, name)
+   
 path = "S:/03 Internal - Current/Kaggle/Otto Group Product Classification" 
 path2 = "/Structured Data/05 Data Documentation/" 
 outpath = path + path2       
 df = pd.read_csv(path + "/Structured Data/01 Raw Datasets/train.csv")
 
 detailed_describe(df, outpath,  'Otto prediction', 'target')
+draw_dists(df.feat_90, "")
+plt.hist(df.feat_90, 10)
+plt.show()
