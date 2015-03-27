@@ -11,11 +11,14 @@ from functools import partial
 import os
 import matplotlib.pyplot as plt
 
-
+############################ Functions ##################################
 def split_num_str(df):
     """ This data seprates numeric columns from str columns """
+    # get numeric data using buildin pandas method
     df_num = df._get_numeric_data()
+    # create a condition for whether cells in df are in df_num
     mask = df.isin(df_num).all(0)
+    # select all cells not in df_num for df_string
     df_str = df.ix[:, ~mask]
     return df_num, df_str
     
@@ -28,7 +31,7 @@ def pct_describe(df):
     return df.describe() 
     
 def outliers(df):
-    """ this computes num observations 4stds from mean """
+    """ this computes number of obs 4stds from mean """
     mean = df.mean()
     std = df.std()
     return (np.abs(df - mean) > 4*std).sum()
@@ -51,14 +54,16 @@ def hicorrel(df, threshold=.7):
     """ 
     Used to evaluate a correlation matrix to see if values above threshold
     """
-    # Overwrite perfect correlation with self
+    # Reset perfect correlation with self to zero
     if len(df[df==1])==1:
         df[df==1] = 0
-    # if two columns are perfectly correlated, raise error
+    # if column has no 1 value, raise error
     elif len(df[df==1])==0:
         raise Exception("Not perfectly correlated with self?")
+    # if column is perfectly correlated with a different column raise error
     else:
         raise Exception("More than 1 perfect correlation")
+    # Determine whether data column has any correlations above threshold
     df_abs = np.abs(df)
     max_val = df_abs.max()
     return max_val > threshold
@@ -69,18 +74,21 @@ def num_describe(df):
     outliers and unique values. Outputs a dataframe that stores results
     Note: df must be numeric only
     """
-     # create a one column
+    if len(df.columns) != len(df._get_numeric_data().columns):
+        raise TypeError("Please, use only numeric data with num_describe")
+    # create a one column ('one' has no missings, used as baseline to 
+    # determine missings in other cols)
     df['one'] = 1
-    # Create a gauranteed non-missing column to compare to other 
+    # Call standard pandas describe 
     df_output = df.describe().transpose().reset_index()
-    # Store X.one as one of the arguments to compare_colcount
+    # Store df.one as one of the arguments to compare_colcount
     miss_count = partial(compare_colcount, df.one)
-    # Create vector of fucntions to apply
+    # Create dictionary of functions to apply to the data
     funcs = {'func1' : [miss_count, 'num_missings'],
              'func2' : [outliers, 'outliers_4std'],
              'func3' : [unique_vals, 'unique_values']}
     for key, value in funcs.iteritems(): 
-        # Compute values
+        # Apply function to data
         df_new_stat = pd.DataFrame(df.apply(value[0], axis=0)).reset_index()
         # Rename column to describe statistic
         df_new_stat = rename_col_position(df_new_stat, value[1], 1)
@@ -190,7 +198,26 @@ def detailed_describe(df, outpath, name, target=""):
     correl_describe(X_num, outpath, name)
     # Chart variable distributions
     chart_feats(X_num, outpath, name)
-   
+
+########################### Tests #######################################
+
+def test_miss_count():
+    """ Tests miss_count, as created in detailed_describe """ 
+    d = {'data' : pd.Series([1., 2., None])}
+    df = pd.DataFrame(d, columns=['data'])
+    df['one'] = 1
+    # Store df.one as one of the arguments to compare_colcount
+    miss_count = partial(compare_colcount, df.one)
+    output = miss_count(df.data)
+    if output:
+        return "Miss_count finds the single missing value created"
+    else:
+        return "Miss_count failed to find the single missing value created"
+    
+    
+ 
+
+################## Example of usind detailed_describe ###################  
 path = "S:/03 Internal - Current/Kaggle/Otto Group Product Classification" 
 path2 = "/Structured Data/05 Data Documentation/" 
 outpath = path + path2       
@@ -198,8 +225,4 @@ df = pd.read_csv(path + "/Structured Data/01 Raw Datasets/train.csv")
 
 detailed_describe(df, outpath,  'Otto prediction', 'target')
 
-X = df.ix[:, (df.columns.values != 'target')] 
-X.feat_90.groupby(X.feat_90).count()
-
-X
 
