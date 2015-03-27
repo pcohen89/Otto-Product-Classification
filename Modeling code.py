@@ -11,6 +11,7 @@ from functools import partial
 import os
 import matplotlib.pyplot as plt
 
+
 def split_num_str(df):
     """ This data seprates numeric columns from str columns """
     df_num = df._get_numeric_data()
@@ -54,8 +55,10 @@ def hicorrel(df, threshold=.7):
     if len(df[df==1])==1:
         df[df==1] = 0
     # if two columns are perfectly correlated, raise error
+    elif len(df[df==1])==0:
+        raise Exception("Not perfectly correlated with self?")
     else:
-        raise Exception("Two perfectly correlated columns")
+        raise Exception("More than 1 perfect correlation")
     df_abs = np.abs(df)
     max_val = df_abs.max()
     return max_val > threshold
@@ -66,10 +69,10 @@ def num_describe(df):
     outliers and unique values. Outputs a dataframe that stores results
     Note: df must be numeric only
     """
+     # create a one column
     df['one'] = 1
     # Create a gauranteed non-missing column to compare to other 
     df_output = df.describe().transpose().reset_index()
-    # create a one column
     # Store X.one as one of the arguments to compare_colcount
     miss_count = partial(compare_colcount, df.one)
     # Create vector of fucntions to apply
@@ -87,6 +90,7 @@ def num_describe(df):
     df_output = rename_col_position(df_output, 'column', 0)
     # drop 'one' column stats
     df_output = df_output[df_output.column != 'one']
+    del df['one']
     return df_output
     
 def correl_describe(df, outpath, nm):
@@ -115,10 +119,13 @@ def correl_describe(df, outpath, nm):
 
 def draw_dists(series, path):
     """ Create charts and save them """
-    plt.hist(series, 10)
-    plt.show()
-    
-     
+    plt.hist(series, bins=10)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title(str(series.name))
+    plt.savefig(path + str(series.name) + ".png", format='png')
+    plt.close("all")
+        
 def chart_feats(df, outpath, name):
     """ Charts the distributions of numeric features """
     if len(df.columns) != len(df._get_numeric_data().columns):
@@ -128,11 +135,9 @@ def chart_feats(df, outpath, name):
     # make corrrelations sub directory if one does not exist
     if not os.path.exists(out_dist_pth):
         os.makedirs(out_dist_pth)
-    
-        
-    
-    
-  
+    pathed_draw = partial(draw_dists, path=out_dist_pth)
+    df.apply(pathed_draw, axis=0)
+
 def detailed_describe(df, outpath, name, target=""):
     """ This will export summaries of a data set
     
@@ -151,12 +156,12 @@ def detailed_describe(df, outpath, name, target=""):
     """
     if target != "":
         y = df[target]
-        X = df.ix[:, (df.columns.values != target)]  
+        X = df.ix[:, (df.columns.values != target)] 
     else:
         X = df   
     # Print most basic features of the data 
     print "Obs in " + name + ": " + str(X.iloc[:, 0].count())
-    print "Cols in " + name + ": " + str(X.iloc[0, :].count())
+    print "Cols (excld target) in " + name + ": " + str(X.iloc[0, :].count())
     # split data into numeric and non-numeric
     X_num, X_str = split_num_str(X)
     # print number of numeric columns
@@ -166,9 +171,9 @@ def detailed_describe(df, outpath, name, target=""):
     # export summary
     df_output.to_csv(outpath + name + ' numeric summary.csv', index=False)
     # Analyze correlations
-    correl_describe(df, outpath, name)
+    correl_describe(X_num, outpath, name)
     # Chart variable distributions
-    chart_feats(df, outpath, name)
+    chart_feats(X_num, outpath, name)
    
 path = "S:/03 Internal - Current/Kaggle/Otto Group Product Classification" 
 path2 = "/Structured Data/05 Data Documentation/" 
@@ -176,6 +181,7 @@ outpath = path + path2
 df = pd.read_csv(path + "/Structured Data/01 Raw Datasets/train.csv")
 
 detailed_describe(df, outpath,  'Otto prediction', 'target')
-draw_dists(df.feat_90, "")
-plt.hist(df.feat_90, 10)
-plt.show()
+
+X = df.ix[:, (df.columns.values != 'target')] 
+
+
