@@ -21,11 +21,7 @@ def split_num_str(df):
     # select all cells not in df_num for df_string
     df_str = df.ix[:, ~mask]
     return df_num, df_str
-    
-def compare_colcount(df1, df2):
-    """ this compares the length of two data frames """
-    return df1.count() - df2.count()
-    
+        
 def pct_describe(df):
     """ acts as a wrapper for df.describe() """
     return df.describe() 
@@ -50,22 +46,24 @@ def rename_col_position(df, new_name, position):
     df.columns = out_cols
     return df
     
+def miss_count(df):
+    """ Returns the number of missings """
+    return len(df) - df.count()  
+    
 def hicorrel(df, threshold=.7):
     """ 
     Used to evaluate a correlation matrix to see if values above threshold
     """
-    # Reset perfect correlation with self to zero
-    if len(df[df==1])==1:
-        df[df==1] = 0
     # if column has no 1 value, raise error
-    elif len(df[df==1])==0:
+    if len(df[df==1]) == 0:
         raise Exception("Not perfectly correlated with self?")
     # if column is perfectly correlated with a different column raise error
-    else:
+    elif len(df[df==1]) > 1:
         raise Exception("More than 1 perfect correlation")
     # Determine whether data column has any correlations above threshold
     df_abs = np.abs(df)
-    max_val = df_abs.max()
+    df_abs_noself = df_abs[df_abs!=1]
+    max_val = df_abs_noself.max()
     return max_val > threshold
 
 def num_describe(df):
@@ -76,13 +74,8 @@ def num_describe(df):
     """
     if len(df.columns) != len(df._get_numeric_data().columns):
         raise TypeError("Please, use only numeric data with num_describe")
-    # create a one column ('one' has no missings, used as baseline to 
-    # determine missings in other cols)
-    df['one'] = 1
     # Call standard pandas describe 
     df_output = df.describe().transpose().reset_index()
-    # Store df.one as one of the arguments to compare_colcount
-    miss_count = partial(compare_colcount, df.one)
     # Create dictionary of functions to apply to the data
     funcs = {'func1' : [miss_count, 'num_missings'],
              'func2' : [outliers, 'outliers_4std'],
@@ -202,20 +195,55 @@ def detailed_describe(df, outpath, name, target=""):
 ########################### Tests #######################################
 
 def test_miss_count():
-    """ Tests miss_count, as created in detailed_describe """ 
-    d = {'data' : pd.Series([1., 2., None])}
-    df = pd.DataFrame(d, columns=['data'])
-    df['one'] = 1
-    # Store df.one as one of the arguments to compare_colcount
-    miss_count = partial(compare_colcount, df.one)
-    output = miss_count(df.data)
-    if output:
-        return "Miss_count finds the single missing value created"
-    else:
+    """ Tests miss_count """ 
+    d = {'data_w_missing' : pd.Series([1., 2., None])}
+    df = pd.DataFrame(d)
+    val_1missexpected = miss_count(df.data_w_missing)
+    if val_1missexpected == 1:
+        return "Miss_count finds exactly the number (1) of missings expected"
+    elif val_1missexpected < 1:
         return "Miss_count failed to find the single missing value created"
-    
-    
- 
+    else:
+        return "Miss_count found more than the single missing value created"
+
+def test_outliers():
+    """ test that outliers counts outliers correctly """
+    d = {'data_w_1outlier' : pd.Series([1., 1., 1., 1., 1., 1., 1., 1.,
+                                        1., 1., 1., 1., 1., 1., 1., 1.,
+                                        1., 1., 1., 1., 1., 1., 1., 1.,
+                                        1., 1., 1., 1., 1., 1., 1., 1.,
+                                        1., 1., 1., 1., 1., 1., 1., 1.,
+                                        15., -15.])}
+    df = pd.DataFrame(d)
+    val_1outlexpected = outliers(df.data_w_1outlier)
+    if val_1outlexpected  == 2:
+        return "Outliers finds exactly the number (2) of outliers expected"
+    elif val_1outlexpected  < 2:
+        return "Outliers failed to find the two outliers"
+    else:
+        return "Outliers found more than the two outliers"
+        
+def test_hicorrel():
+    """ 
+    Test that the hicorrel function (and the way it is used in detailed
+    describe) works 
+    """
+    d = {'feat1' : pd.Series([1., 1., 1., 1., 2., 2., 1., 1., 1., 1., 1.,]),
+         'feat2' : pd.Series([1., 2., 2., 3., 3., 4., 4., 5., -5., 6., -6.,]),
+         'feat3' : pd.Series([1., 2., 2., 3., 3., 4., 4., 5., 5., 6., 6.,]),
+         'feat4' : pd.Series([1., 2., 2., 3., 3., 4., 4., 5., 5., 5.5, 6.5,])
+         }
+    df = pd.DataFrame(d)
+    df_correl = df.corr()
+    # store rows and columns with high correlation values
+    df_hicorr_cols = df_correl.apply(hicorrel, axis=0)
+    df_hicorr_rows = df_correl.apply(hicorrel, axis=1)
+    # take subsample of corr table with only high corr columns and rows
+    df_correl_zoomin = df_correl.ix[df_hicorr_rows, df_hicorr_cols]
+    zoom_cols = df_correl_zoomin.columns.values
+    if ((len(zoom_cols) == 2) & (zoom_cols == ['feat3', 'feat4'])):
+        print "yeay"
+
 
 ################## Example of usind detailed_describe ###################  
 path = "S:/03 Internal - Current/Kaggle/Otto Group Product Classification" 
@@ -225,4 +253,8 @@ df = pd.read_csv(path + "/Structured Data/01 Raw Datasets/train.csv")
 
 detailed_describe(df, outpath,  'Otto prediction', 'target')
 
-
+d = pd.Series([-8., 1., 1., 1., 1., 1., 1., 1.,
+                                       1., 1., 1., 1., 1., 1., 1., 1.,
+                                       1., 1., 1., 1., 1., 1., 1., 1.,
+                                       1., 1., 1., 1., 1., 1., 1., 1.,
+                                       8., 1.])
