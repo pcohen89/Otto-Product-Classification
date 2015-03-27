@@ -118,12 +118,26 @@ def correl_describe(df, outpath, nm):
                             index=False)
 
 def draw_dists(series, path):
-    """ Create charts and save them """
-    plt.hist(series, bins=10)
+    """ Create distribution charts and save them """
+    # For vars with less than 100 unique values, treat as categorical
+    if len(series.drop_duplicates()) < 100:
+        # Count frequency of each value
+        clpsd_series = series.groupby(series).count() 
+        # create bar chart
+        plt.bar(clpsd_series.index, clpsd_series.values, width=1)
+    # for vals with more than 100 unique vals, treat as continuous
+    else:
+        # Create a historgram
+        hist_min_max = (series.quantile(.01), series.quantile(.99))
+        num_bins = min(len(series.drop_duplicates()), 50) 
+        plt.hist(series, bins=num_bins, range=hist_min_max)
+    # Add titles
     plt.xlabel('Value')
     plt.ylabel('Frequency')
     plt.title(str(series.name))
+    # Save chart
     plt.savefig(path + str(series.name) + ".png", format='png')
+    # clear chartspace
     plt.close("all")
         
 def chart_feats(df, outpath, name):
@@ -135,7 +149,9 @@ def chart_feats(df, outpath, name):
     # make corrrelations sub directory if one does not exist
     if not os.path.exists(out_dist_pth):
         os.makedirs(out_dist_pth)
+    # Bind the path to the draw dists function
     pathed_draw = partial(draw_dists, path=out_dist_pth)
+    # Calculate and save pictures of feature distributions
     df.apply(pathed_draw, axis=0)
 
 def detailed_describe(df, outpath, name, target=""):
@@ -183,5 +199,7 @@ df = pd.read_csv(path + "/Structured Data/01 Raw Datasets/train.csv")
 detailed_describe(df, outpath,  'Otto prediction', 'target')
 
 X = df.ix[:, (df.columns.values != 'target')] 
+X.feat_90.groupby(X.feat_90).count()
 
+X
 
