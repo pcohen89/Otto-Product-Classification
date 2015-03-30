@@ -91,7 +91,6 @@ def num_describe(df):
     df_output = rename_col_position(df_output, 'column', 0)
     # drop 'one' column stats
     df_output = df_output[df_output.column != 'one']
-    del df['one']
     return df_output
 
 def correl_describe(df, outpath, nm):
