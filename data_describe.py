@@ -158,6 +158,7 @@ def detailed_describe(df, outpath, name, target=""):
     """ This will export summaries of a data set
 
     Parameters
+    
     -----------
 
     df : pandas Dataframe, shape = [n_samples, n_features]
@@ -246,9 +247,9 @@ def test_hicorrel():
         print "Correlation is function is broken"
 
 ################## Example of usind detailed_describe ###################
-PATH = "S:/03 Internal - Current/Kaggle/Otto Group Product Classification"
-PATH2 = "/Structured Data/05 Data Documentation/"
-OUTPATH = PATH + PATH2
-df = pd.read_csv(PATH + "/Structured Data/01 Raw Datasets/train.csv")
+#PATH = "S:/03 Internal - Current/Kaggle/Otto Group Product Classification"
+#PATH2 = "/Structured Data/05 Data Documentation/"
+#OUTPATH = PATH + PATH2
+#df = pd.read_csv(PATH + "/Structured Data/01 Raw Datasets/train.csv")
 
-detailed_describe(df, OUTPATH,  'Otto prediction', 'target')
+#detailed_describe(df, OUTPATH,  'Otto prediction', 'target')
