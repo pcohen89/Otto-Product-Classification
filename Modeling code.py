@@ -45,7 +45,9 @@ def multiclass_log_loss(y_true, y_pred, eps=1e-15):
     https://www.kaggle.com/wiki/MultiClassLogLoss
 
     idea from this post:
-    http://www.kaggle.com/c/emc-data-science/forums/t/2149/is-anyone-noticing-difference-betwen-validation-and-leaderboard-error/12209#post12209
+    http://www.kaggle.com/c/emc-data-science/forums/t/2149/
+    is-anyone-noticing-difference-betwen-validation-and-leaderboard-error/
+    12209#post12209
 
     Parameters
     ----------
@@ -72,33 +74,66 @@ def baseline_models(df, feats, target='target'):
     This function applies a standard method for creating a baseline
     classification prediction
     """
+    # Name train and val
     trn = df[df.is_val == 0].reset_index()
     val = df[df.is_val == 1].reset_index()
-    forests = {'forst1' : [2000, None],
+    # Define forests to test
+    forests = {'forst1' : [3000, None],
                'forst2' : [30, 25],
                'forst3' : [30, 12]}
+    forests = {'forst1' : [30, None],
+               'forst2' : [30, 25],
+               'forst3' : [30, 12]}
+    # initialize best forest score
+    best_frst = 10000
+    # fit and evaluate each forest
     for name, params in forests.iteritems():
+        # define forest
         frst = RandomForestClassifier(n_estimators=params[0], n_jobs=8,
                                       max_depth=params[1])
+        # fit forest
         frst.fit(trn[feats], trn[target].values)
+        # create predictions
         preds = frst.predict_proba(val[feats])
+        # evaluate predictions
         score = multiclass_log_loss(val[target]-1, preds)
         print str(name) + " has a score of " + str(score)
+        # store the predictions of the best forest run
+        if score < best_frst:
+            best_frst = score
+            best_frst_preds = preds
+    # initialize best boost score
     best_boost = 10000
-    boosts = {'boost1' : [100, 3, .28],
-              'boost2' : [100, 3, .3],
-              'boost3' : [100, 3, .32],
-              'boost4' : [200, 2, .35],
-              'boost5' : [200, 2, .4],
-              'boost6' : [200, 2, .45]}
+    # define boosted trees to try
+    boosts = {'boost1' : [300, 3, .11],
+              'boost2' : [300, 3, .13],
+              'boost3' : [300, 3, .14],
+              'boost4' : [1200, 1, .07],
+              'boost5' : [1200, 1, .08],
+              'boost6' : [1200, 1, .09]}
+              
+    # fit and test each boost specification
     for name, params in boosts.iteritems():
+        # create boost specification
         boost = GradientBoostingClassifier(n_estimators=params[0],
                                            max_depth=params[1],
-                                           learning_rate=params[2])                                 
+                                           learning_rate=params[2])
+        # fit boosted trees
         boost.fit(trn[feats], trn[target].values)
+        # create predictions
         preds = boost.predict_proba(val[feats])
+        # score predictions
         score = multiclass_log_loss(val[target]-1, preds)
         print str(name) + " has a score of " + str(score)
+        # store the predictions of the best boost run
+        if score < best_boost:
+            best_boost = score
+            best_boost_preds = preds
+    blend = best_boost_preds + best_frst_preds
+    score = multiclass_log_loss(val[target]-1,  blend)
+    print "Blended score is: " + str(score)
+     
+            
  
 ############################ Tests ##################################
 def test_strat_samp():
