@@ -93,61 +93,49 @@ def multiclass_log_loss(y_true, y_pred, eps=1e-15):
     vsota = np.sum(actual * np.log(predictions))
     return -1.0 / rows * vsota
    
-def baseline_models(df, feats, target='target'):
+def baseline_models(df, feats, models, target='target'):
     """
     This function applies a standard method for creating a baseline
     classification prediction
     """
     # Name train and val
     trn = df[df.is_val == 0].reset_index()
-    val = df[df.is_val == 1].reset_index()
-    # Define forests to test
-    forests = {'forst1' : [3000, None], 'forst2' : [30, 25],
-               'forst3' : [30, 12]}
-    forests = {'forst3' : [30, 12], 'forst2' : [200, 25]}
+    # Fit models  
+    for name, vals in models.iteritems():
+        if vals['type'] == 'frst':
+            # define forest
+            mod = RandomForestClassifier(n_estimators=vals['prms'][0], 
+                                         n_jobs=8,
+                                         max_depth=vals['prms'][1])
+        if vals['type'] == 'boost':
+            # create boost specification
+            mod = GradientBoostingClassifier(n_estimators=vals['prms'][0], 
+                                             max_depth=vals['prms'][1],
+                                             learning_rate=vals['prms'][2])
+        # fit model
+        mod.fit(trn[feats], trn[target].values)
+        # store forest
+        vals['model'] = mod
+    return models
     
-    # initialize best forest score
-    best_frst = {'model' : 'none', 'score' : 10000, 'preds' : 'none'}
-    # fit and evaluate each forest
-    for name, params in forests.iteritems():
-        # define forest
-        frst = RandomForestClassifier(n_estimators=params[0], n_jobs=8,
-                                      max_depth=params[1])
-        # fit forest
-        frst.fit(trn[feats], trn[target].values)
+def evaluate_models(df, models, feats, target="target"):
+    """ Evaluate models """
+    # Name train and val
+    df_val = df[df.is_val == 1].reset_index()
+    # test each model
+    for name, vals in models.iteritems():
         # create predictions
-        preds = frst.predict_proba(val[feats])
-        # evaluate predictions
-        score = multiclass_log_loss(val[target]-1, preds)
-        print str(name) + " has a score of " + str(score)
-        # store the predictions of the best forest run
-        if score < best_frst['score']:
-            best_frst = {'model' : frst, 'score' : score, 'preds' : preds}
-    # initialize best boost score
-    best_boost = {'model' : 'none', 'score' : 10000, 'preds' : 'none'}
-    # define boosted trees to try
-    boosts = {'boost1' : [300, 3, .135], 'boost2' : [300, 3, .14],
-              'boost3' : [300, 3, .145],
-              'boost4' : [1200, 1, .1], 'boost5' : [1200, 1, .11],
-              'boost6' : [1200, 1, .14]
-              }
-    boosts = {'boost1' : [3, 3, .135]} 
-    # fit and test each boost specification
-    for name, params in boosts.iteritems():
-        # create boost specification
-        boost = GradientBoostingClassifier(n_estimators=params[0],
-                                           max_depth=params[1],
-                                           learning_rate=params[2])
-        # fit boosted trees
-        boost.fit(trn[feats], trn[target].values)
-        # create predictions
-        preds = boost.predict_proba(val[feats])
+        preds = vals['model'].predict_proba(df_val[feats])
         # score predictions
-        score = multiclass_log_loss(val[target]-1, preds)
+        score = multiclass_log_loss(df_val[target]-1, preds)
         print str(name) + " has a score of " + str(score)
-        # store the predictions of the best boost run
-        if score < best_boost['score']:
-            best_boost = {'model' : frst, 'score' : score, 'preds' : preds}
+        # store the predictions and score
+        vals['score'] = score
+        vals['preds'] = preds
+    return models
+            
+    # initialize best boost score
+    best_models = {'model' : 'none', 'score' : 10000, 'preds' : 'none'}
     # create list of best models
     best_models = [best_frst, best_boost]    
     # determine sum of scores from best models
@@ -224,8 +212,18 @@ PATH2 = "05 Data Documentation/"
 SUBM_PATH = "03 Final Datasets/Submissions/"
 OUTPATH = PATH + PATH2
 
+# Define models to test
+mods = {
+'forst3' : {'prms' : [3000, None], 'model' : 'none', 'type' : 'frst'},
+'boost2' : {'prms' : [300, 3, .14], 'model' : 'none', 'type' : 'boost'},
+'boost4' : {'prms' : [1400, 1, .13], 'model' : 'none','type' : 'boost'},
+'boost5' : {'prms' : [1400, 1, .14], 'model' : 'none', 'type' : 'boost'},
+'boost6' : {'prms' : [1400, 1, .16], 'model' : 'none', 'type' : 'boost'}
+}  
+
 df_train = prep_data(PATH+PATH2+"../01 Raw Datasets/", "train.csv")
 df_test = prep_data(PATH+PATH2+"../01 Raw Datasets/", "test.csv", is_train=0)
 Xfeats = list_feats(df_train, ['id', 'target', 'is_val', 'target_num'])  
-best_models = baseline_models(df_train, Xfeats, target='target_num')
+fit_models = baseline_models(df_train, Xfeats, mods, target='target_num')
+evaluate_models(df_train, fit_models, Xfeats, target="target_num")
 create_subm(best_models, df_test, Xfeats, PATH + SUBM_PATH, 'testing')
