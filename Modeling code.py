@@ -6,12 +6,18 @@ Created on Wed Mar 18 10:57:18 2015
 """
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import GradientBoostingClassifier
+import sys
+sys.path.append('../python/')
+import xgboost as xgb
 import pandas as pd
 import numpy as np
 import random
+import time
+import xgboost as xgb
 from functools import partial
 import os
-sys.path.append("C:/Git_repos/ProductClasses")
+sys.path.append("../python/")
+import xgboost
 import matplotlib.pyplot as plt
 import data_describe as dd
 
@@ -28,16 +34,33 @@ def prep_data(data_path, name, is_train=1):
         df['target_num'] = df['target'].map(lambda x: x[-1:]).astype(int)
     return df
     
-def list_feats(df, non_feats):
+def build_Otto_vars(df):
+    """ Build variables for Otto """
+    # Create list of original, on-id vars
+    orig_feats = list_feats(df)
+    is_zero_nms = list_feats(df)
+    # Create a row sum
+    df['feat_row_sum'] = df.ix[:, orig_feats].sum(1)
+    # Create is_zero binaries
+    for index in range(0, len(is_zero_nms)):
+        is_zero_nms[index] = is_zero_nms[index] + "_is_zero"
+    df[is_zero_nms] = df[orig_feats] > 0
+    # Count times non-zero
+    df['feat_cnt_non_zero'] = df.ix[:, is_zero_nms].sum(1)
+    return df
+    
+    
+def list_feats(df):
     """ Creates list of all modeling features """
-    # Create list of all columns
-    Xfeats = df.columns.values.tolist()
-    # remove non modeling columns from feature list
-    for col in non_feats:
-        Xfeats.remove(col)
-    return Xfeats
+    # Create list of original, on-id vars
+    orig_feats = list(df.columns.values)
+    temp = list(df.columns.values)
+    for name in temp:
+        if name[:4] != "feat":
+            orig_feats.remove(name) 
+    return orig_feats
 
-def stratified_in_out_samp(df, strat_var, split_rt, seed=42):
+def stratified_in_out_samp(df, strat_var, split_rt, seed=20):
     """ 
     This function splits raw data into a train and validation sample,
     that is stratified on the selected variable
@@ -102,6 +125,7 @@ def baseline_models(df, feats, models, target='target'):
     trn = df[df.is_val == 0].reset_index()
     # Fit models  
     for name, vals in models.iteritems():
+        print "Fitting " + str(name)
         if vals['type'] == 'frst':
             # define forest
             mod = RandomForestClassifier(n_estimators=vals['prms'][0], 
@@ -111,9 +135,15 @@ def baseline_models(df, feats, models, target='target'):
             # create boost specification
             mod = GradientBoostingClassifier(n_estimators=vals['prms'][0], 
                                              max_depth=vals['prms'][1],
-                                             learning_rate=vals['prms'][2])
+                                             learning_rate=vals['prms'][2],
+                                             subsample=.8,
+                                             max_features=140
+                                            )
         # fit model
+        t0 = time.time()                                     
         mod.fit(trn[feats], trn[target].values)
+        title = "It took {time} minutes to run " + name
+        print title.format(time=(time.time()-t0)/60)
         # store forest
         vals['model'] = mod
     return models
@@ -122,37 +152,50 @@ def evaluate_models(df, models, feats, target="target"):
     """ Evaluate models """
     # Name train and val
     df_val = df[df.is_val == 1].reset_index()
+    # keep best model of each type
+    best_mods = {}
     # test each model
     for name, vals in models.iteritems():
         # create predictions
-        preds = vals['model'].predict_proba(df_val[feats])
+        preds = vals['model'].predict_proba(df_val.ix[:,feats])
         # score predictions
         score = multiclass_log_loss(df_val[target]-1, preds)
         print str(name) + " has a score of " + str(score)
         # store the predictions and score
         vals['score'] = score
         vals['preds'] = preds
-    return models
-            
-    # initialize best boost score
-    best_models = {'model' : 'none', 'score' : 10000, 'preds' : 'none'}
-    # create list of best models
-    best_models = [best_frst, best_boost]    
+        # if a model of the current type is already stored in the best_mods
+        if name in best_mods:
+            # if the score of the current model is at least close in score
+            # to the best model
+            if .75 * vals['score'] < best_mods[vals['type']]['score']:
+                # replace old 'best' model with current model
+                best_mods[name] = vals
+        # if no model of current type is in best_mods
+        else:
+            best_mods[name] = vals
+    return best_mods
+
+def eval_blend_best(df_train, best_mods, target='target'):          
+    """ Creates a niave blend of the best models and evalutes it """
+    # Name train and val
+    df_val = df_train[df_train.is_val == 1].reset_index()
     # determine sum of scores from best models
     best_score = 100
-    for mod in best_models:
-        best_score = min(best_score, mod['score'])
+    # determine number of models
+    num_mods = len(best_mods.keys())
+    for name, vals in best_mods.iteritems():
+        best_score = min(best_score, vals['score'])
     # create scaled weights for each model (arbitrary combination)
-    for mod in best_models:
-        mod['weight'] = 1 / ((mod['score'] - best_score + .1)*10)
-        print mod['weight']
+    for name, vals in best_mods.iteritems():
+        vals['weight'] = (.1 / num_mods) / ((vals['score'] - best_score + .1)*10)
+        print vals['weight']
     # create a blended score
     blend_preds = 0
-    for mod in best_models:
-        blend_preds += mod['weight']*mod['preds']
-    blend_score = multiclass_log_loss(val[target]-1, blend_preds)
+    for name, vals in best_mods.iteritems():
+        blend_preds += vals['weight']*vals['preds']
+    blend_score = multiclass_log_loss(df_val[target]-1, blend_preds)
     print "Blended score is: " + str(blend_score)
-    return best_models
   
 def create_subm(models, df_test, feats, subm_path, nm):
     """ 
@@ -175,14 +218,16 @@ def create_subm(models, df_test, feats, subm_path, nm):
     # reset all non id columns to zero
     sample_sub.ix[:, 1:] = 0
     # create blended predictions
-    for mod in models:
+    for name, val in models.iteritems():
         # isolate test features
         testX = df_test[feats]
         # create weight predictions
-        scaled_preds = mod['weight']*mod['model'].predict_proba(testX)
+        scaled_preds = val['weight']*val['model'].predict_proba(testX)
         # Create weighted average of models in sample sub
         sample_sub.ix[:, 1:] += scaled_preds
-    sample_sub.ix[:, 0] = sample_sub.ix[:, 0].astype(int)
+    print sample_sub.dtypes
+    sample_sub['id'] = sample_sub['id'].astype(int)
+    print sample_sub.dtypes
     # export submission
     sample_sub.to_csv(subm_path + nm + '.csv', index=False)      
  
@@ -215,15 +260,26 @@ OUTPATH = PATH + PATH2
 # Define models to test
 mods = {
 'forst3' : {'prms' : [3000, None], 'model' : 'none', 'type' : 'frst'},
-'boost2' : {'prms' : [300, 3, .14], 'model' : 'none', 'type' : 'boost'},
-'boost4' : {'prms' : [1400, 1, .13], 'model' : 'none','type' : 'boost'},
-'boost5' : {'prms' : [1400, 1, .14], 'model' : 'none', 'type' : 'boost'},
-'boost6' : {'prms' : [1400, 1, .16], 'model' : 'none', 'type' : 'boost'}
-}  
-
+'forst2' : {'prms' : [3000, None], 'model' : 'none', 'type' : 'frst'},
+'boost2' : {'prms' : [300, 3, .141], 'model' : 'none', 'type' : 'boost'},
+'boost4' : {'prms' : [150, 10, .045], 'model' : 'none','type' : 'boost'},
+'boost5' : {'prms' : [150, 10, .05], 'model' : 'none', 'type' : 'boost'},
+'boost6' : {'prms' : [150, 10, .055], 'model' : 'none', 'type' : 'boost'}
+}
+ 
+# load data with simple cleaning
 df_train = prep_data(PATH+PATH2+"../01 Raw Datasets/", "train.csv")
 df_test = prep_data(PATH+PATH2+"../01 Raw Datasets/", "test.csv", is_train=0)
-Xfeats = list_feats(df_train, ['id', 'target', 'is_val', 'target_num'])  
+# build variables
+df_train = build_Otto_vars(df_train)
+df_test = build_Otto_vars(df_test)
+# select featyres
+Xfeats = list_feats(df_train)
+# fit models  
 fit_models = baseline_models(df_train, Xfeats, mods, target='target_num')
-evaluate_models(df_train, fit_models, Xfeats, target="target_num")
-create_subm(best_models, df_test, Xfeats, PATH + SUBM_PATH, 'testing')
+# evaluate models to kick it very poor ones
+best_mods = evaluate_models(df_train, fit_models, Xfeats, target="target_num")
+# blend models
+eval_blend_best(df_train, best_mods, target='target_num')
+# Create submission
+create_subm(best_mods, df_test, Xfeats, PATH + SUBM_PATH, 'second real subm')
