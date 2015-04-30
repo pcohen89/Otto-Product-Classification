@@ -6,6 +6,7 @@ Created on Wed Mar 18 10:57:18 2015
 """
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.svm import SVC
 import sys
 sys.path.append('../python/')
 import xgboost as xgb
@@ -13,13 +14,16 @@ import pandas as pd
 import numpy as np
 import random
 import time
+import copy
+from sklearn.feature_selection import chi2, SelectPercentile, f_classif
 import xgboost as xgb
 from functools import partial
 import os
-sys.path.append("../python/")
-import xgboost
-import matplotlib.pyplot as plt
+sys.path.append("C:/Git_repos/compiled_xgboost/lib")
+import xgboost as xgb
 import data_describe as dd
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import OneHotEncoder
 
 ############################ Functions ##################################
 def prep_data(data_path, name, is_train=1):
@@ -41,24 +45,48 @@ def build_Otto_vars(df):
     is_zero_nms = list_feats(df)
     # Create a row sum
     df['feat_row_sum'] = df.ix[:, orig_feats].sum(1)
+    # Create a row std
+    df['feat_row_std'] = df.ix[:, orig_feats].std(1)
     # Create is_zero binaries
     for index in range(0, len(is_zero_nms)):
-        is_zero_nms[index] = is_zero_nms[index] + "_is_zero"
+        is_zero_nms[index] = "is_zero_" + is_zero_nms[index]
     df[is_zero_nms] = df[orig_feats] > 0
     # Count times non-zero
     df['feat_cnt_non_zero'] = df.ix[:, is_zero_nms].sum(1)
+    # Clear mem space
+    for name in is_zero_nms:
+        del df[name]
+    # One hot encode vars
+    enc = OneHotEncoder(sparse=False)
+    oneHot = enc.fit_transform(df_train[orig_feats])
+    # create column names for one hot encoded data
+    
     return df
-    
-    
+
 def list_feats(df):
     """ Creates list of all modeling features """
-    # Create list of original, on-id vars
+    # Create list of original, non-id vars
     orig_feats = list(df.columns.values)
-    temp = list(df.columns.values)
-    for name in temp:
+    chosen_feats = list(df.columns.values)
+    for name in orig_feats:
         if name[:4] != "feat":
-            orig_feats.remove(name) 
-    return orig_feats
+            chosen_feats.remove(name)
+    return chosen_feats
+   
+def select_feats(df, target="target"):
+    """ Creates list of all modeling features """
+    # Create list of original, non-id vars
+    feats = list_feats(df)
+    chosen_feats = list_feats(df)
+    # Name train rows
+    trn = df[df.is_val == 0].reset_index()
+    # save feats chosen by forest
+    selector = SelectPercentile(f_classif, percentile=97)
+    selector.fit(trn[feats], trn[target].values)
+    for i in range(0, len(selector.get_support())):
+        if ~selector.get_support()[i]:
+            chosen_feats.remove(feats[i])
+    return chosen_feats
 
 def stratified_in_out_samp(df, strat_var, split_rt, seed=20):
     """ 
@@ -121,29 +149,48 @@ def baseline_models(df, feats, models, target='target'):
     This function applies a standard method for creating a baseline
     classification prediction
     """
-    # Name train and val
+    # Name train rows
     trn = df[df.is_val == 0].reset_index()
+    # xgb train
+    xg_train = xgb.DMatrix(trn[feats], label=trn[target].values)
     # Fit models  
     for name, vals in models.iteritems():
         print "Fitting " + str(name)
         if vals['type'] == 'frst':
             # define forest
             mod = RandomForestClassifier(n_estimators=vals['prms'][0], 
-                                         n_jobs=8,
-                                         max_depth=vals['prms'][1])
+                                         n_jobs=8, max_depth=vals['prms'][1])
         if vals['type'] == 'boost':
             # create boost specification
             mod = GradientBoostingClassifier(n_estimators=vals['prms'][0], 
-                                             max_depth=vals['prms'][1],
-                                             learning_rate=vals['prms'][2],
-                                             subsample=.8,
-                                             max_features=140
-                                            )
+                      max_depth=vals['prms'][1], learning_rate=vals['prms'][2], 
+                      subsample=.8, max_features=80)
+        if vals['type'] == 'svm':
+            print "Running svm with " + str(len(trn_sm.index)) + " obs"
+            mod = SVC(C=vals['prms'][0], probability=True)
+        if vals['type'] == 'log':
+            # create logistic specification
+            mod = LogisticRegression(C=vals['prms'][0])
         # fit model
-        t0 = time.time()                                     
-        mod.fit(trn[feats], trn[target].values)
-        title = "It took {time} minutes to run " + name
-        print title.format(time=(time.time()-t0)/60)
+        t0 = time.time() 
+        if vals['type'] != 'svm':                                    
+            mod.fit(trn[feats], trn[target].values)
+            title = "It took {time} minutes to run " + name
+            print title.format(time=(time.time()-t0)/60)
+        else:
+            # Subset the insample
+            num_obs = len(trn.index)
+            # create a random digit for each observation in group
+            trn['rand'] = pd.Series(np.random.rand(num_obs), index=trn.index)
+            svm_trn = pd.DataFrame(trn[trn.rand<.025].reset_index())
+            one_hot = OneHotEncoder()
+            onehot.fit(svm_trn[feats])
+            svm_trn_one_hot = onehot.transform(svm_trn[feats])                                  
+            mod.fit(trn[feats], trn[target].values)
+            title = "It took {time} minutes to run " + name
+            print title.format(time=(time.time()-t0)/60)
+        #else:
+        #    mod = bst
         # store forest
         vals['model'] = mod
     return models
@@ -156,8 +203,12 @@ def evaluate_models(df, models, feats, target="target"):
     best_mods = {}
     # test each model
     for name, vals in models.iteritems():
-        # create predictions
-        preds = vals['model'].predict_proba(df_val.ix[:,feats])
+        if vals['type'] != 'xbm':
+            # create predictions
+            preds = vals['model'].predict_proba(df_val.ix[:,feats])
+        else:
+            # create predictions
+            preds = vals['model'].predict(df_val.ix[:,feats])
         # score predictions
         score = multiclass_log_loss(df_val[target]-1, preds)
         print str(name) + " has a score of " + str(score)
@@ -188,7 +239,7 @@ def eval_blend_best(df_train, best_mods, target='target'):
         best_score = min(best_score, vals['score'])
     # create scaled weights for each model (arbitrary combination)
     for name, vals in best_mods.iteritems():
-        vals['weight'] = (.1 / num_mods) / ((vals['score'] - best_score + .1)*10)
+        vals['weight'] = (.1 / num_mods) / ((vals['score'] - best_score + .1)*2)
         print vals['weight']
     # create a blended score
     blend_preds = 0
@@ -260,12 +311,38 @@ OUTPATH = PATH + PATH2
 # Define models to test
 mods = {
 'forst3' : {'prms' : [3000, None], 'model' : 'none', 'type' : 'frst'},
-'forst2' : {'prms' : [3000, None], 'model' : 'none', 'type' : 'frst'},
-'boost2' : {'prms' : [300, 3, .141], 'model' : 'none', 'type' : 'boost'},
-'boost4' : {'prms' : [150, 10, .045], 'model' : 'none','type' : 'boost'},
-'boost5' : {'prms' : [150, 10, .05], 'model' : 'none', 'type' : 'boost'},
-'boost6' : {'prms' : [150, 10, .055], 'model' : 'none', 'type' : 'boost'}
+'boost2' : {'prms' : [400, 3, .10], 'model' : 'none', 'type' : 'boost'},
+'boost2a' : {'prms' : [400, 3, .12], 'model' : 'none', 'type' : 'boost'},
+'boost4' : {'prms' : [150, 10, .042], 'model' : 'none','type' : 'boost'},
+'boost5' : {'prms' : [150, 10, .044], 'model' : 'none', 'type' : 'boost'},
+'boost6' : {'prms' : [150, 10, .046], 'model' : 'none', 'type' : 'boost'}
 }
+
+mods = {
+'log1' : {'prms' : [.10, ], 'model' : 'none', 'type' : 'log'},
+'log2' : {'prms' : [.30, ], 'model' : 'none', 'type' : 'log'},
+'log3' : {'prms' : [.010, ], 'model' : 'none', 'type' : 'log'},
+'log4' : {'prms' : [.040, ], 'model' : 'none', 'type' : 'log'},
+'log5' : {'prms' : [.00100, ], 'model' : 'none', 'type' : 'log'}
+}
+
+mods = {
+'svm1' : {'prms' : [3, ], 'model' : 'none', 'type' : 'svm'},
+'svm2' : {'prms' : [4, ], 'model' : 'none', 'type' : 'svm'},
+'svm3' : {'prms' : [5, ], 'model' : 'none', 'type' : 'svm'},
+'svm4' : {'prms' : [6, ], 'model' : 'none', 'type' : 'svm'},
+'svm5' : {'prms' : [7, ], 'model' : 'none', 'type' : 'svm'}
+}
+
+"""
+mods = {
+'xbm' : {'prms' : {"objective" : "multi:softprob",
+                   "eval_metric" : "mlogloss",
+                   "num_class" : 9,
+                   "nthread" : 7},
+        'model' : 'none',
+        'type' : 'xbm'}
+} """
  
 # load data with simple cleaning
 df_train = prep_data(PATH+PATH2+"../01 Raw Datasets/", "train.csv")
@@ -273,8 +350,11 @@ df_test = prep_data(PATH+PATH2+"../01 Raw Datasets/", "test.csv", is_train=0)
 # build variables
 df_train = build_Otto_vars(df_train)
 df_test = build_Otto_vars(df_test)
-# select featyres
-Xfeats = list_feats(df_train)
+# select features
+
+
+
+Xfeats = select_feats(df_train, "target_num")
 # fit models  
 fit_models = baseline_models(df_train, Xfeats, mods, target='target_num')
 # evaluate models to kick it very poor ones
@@ -282,4 +362,9 @@ best_mods = evaluate_models(df_train, fit_models, Xfeats, target="target_num")
 # blend models
 eval_blend_best(df_train, best_mods, target='target_num')
 # Create submission
-create_subm(best_mods, df_test, Xfeats, PATH + SUBM_PATH, 'second real subm')
+create_subm(best_mods, df_test, Xfeats, PATH + SUBM_PATH, 'third real subm')
+
+df_train[Xfeats].apply(pd.Series.value_counts, axis=1)
+.apply(lambda x: )
+
+
