@@ -35,6 +35,7 @@ def prep_data(data_path, name, is_train=1):
         df = stratified_in_out_samp(df, 'target', .75)
     # recode target as numeric
     if is_train:
+        # Uses last digit which is the numeric part of target
         df['target_num'] = df['target'].map(lambda x: x[-1:]).astype(int)
     return df
     
@@ -56,11 +57,10 @@ def build_Otto_vars(df):
     # Clear mem space
     for name in is_zero_nms:
         del df[name]
-    # One hot encode vars
-    enc = OneHotEncoder(sparse=False)
-    oneHot = enc.fit_transform(df_train[orig_feats])
+    # Normalize original vars
+    f = lambda x: (x-x.mean())/x.std()
+    df[list_feats(df)] = df[list_feats(df)].apply(f, axis=0)
     # create column names for one hot encoded data
-    
     return df
 
 def list_feats(df):
@@ -166,36 +166,30 @@ def baseline_models(df, feats, models, target='target'):
                       max_depth=vals['prms'][1], learning_rate=vals['prms'][2], 
                       subsample=.8, max_features=80)
         if vals['type'] == 'svm':
-            print "Running svm with " + str(len(trn_sm.index)) + " obs"
-            mod = SVC(C=vals['prms'][0], probability=True)
-        if vals['type'] == 'log':
-            # create logistic specification
-            mod = LogisticRegression(C=vals['prms'][0])
+            mod = SVC(C=vals['prms'][0], kernel=vals['prms'][1],
+                      probability=True)
         # fit model
         t0 = time.time() 
         if vals['type'] != 'svm':                                    
             mod.fit(trn[feats], trn[target].values)
-            title = "It took {time} minutes to run " + name
-            print title.format(time=(time.time()-t0)/60)
         else:
             # Subset the insample
             num_obs = len(trn.index)
             # create a random digit for each observation in group
             trn['rand'] = pd.Series(np.random.rand(num_obs), index=trn.index)
-            svm_trn = pd.DataFrame(trn[trn.rand<.025].reset_index())
-            one_hot = OneHotEncoder()
-            onehot.fit(svm_trn[feats])
-            svm_trn_one_hot = onehot.transform(svm_trn[feats])                                  
-            mod.fit(trn[feats], trn[target].values)
-            title = "It took {time} minutes to run " + name
-            print title.format(time=(time.time()-t0)/60)
+            svm_trn = pd.DataFrame(trn[trn.rand<.9].reset_index())
+            print "Running svm with " + str(len(svm_trn.index)) + " obs"  
+            # Fit model                             
+            mod.fit(svm_trn[feats], svm_trn[target].values)
+        title = "It took {time} minutes to run " + name
+        print title.format(time=(time.time()-t0)/60)
         #else:
         #    mod = bst
         # store forest
         vals['model'] = mod
     return models
     
-def evaluate_models(df, models, feats, target="target"):
+def evaluate_models(df, models, feats, encoder=None, target="target"):
     """ Evaluate models """
     # Name train and val
     df_val = df[df.is_val == 1].reset_index()
@@ -280,7 +274,31 @@ def create_subm(models, df_test, feats, subm_path, nm):
     sample_sub['id'] = sample_sub['id'].astype(int)
     print sample_sub.dtypes
     # export submission
-    sample_sub.to_csv(subm_path + nm + '.csv', index=False)      
+    sample_sub.to_csv(subm_path + nm + '.csv', index=False) 
+
+def blend_subs(files, subm_path, name, targets):
+    """ 
+    Blends Kaggle submissions and outputs correlations and blended
+    NOTE: for now, rates should sum to one
+    """
+    # create submission template
+    keys = list(files.keys())
+    blended = pd.read_csv(subm_path+keys[0]+'.csv')
+    blended[targets] = 0
+    # identify number of targets
+    num_trgts = len(targets)
+    # for each target and file, blend predictions
+    for path, rate in files.iteritems():
+        # Created blended value
+        subm = pd.read_csv(subm_path+path+'.csv')
+        for target in targets:
+            blended[target] += rate*subm[target]/num_trgts
+    # Save new file back to submissions
+    blended.to_csv(subm_path + name + '.csv', index=False) 
+    
+def subm_correlation(file1, file2, subm_path, targets):
+    subm1 = pd.read_csv(subm_path+path+'.csv')
+    subm2 = pd.read_csv(subm_path+path+'.csv')
  
 ############################ Tests ##################################
 def test_strat_samp():
@@ -319,52 +337,36 @@ mods = {
 }
 
 mods = {
-'log1' : {'prms' : [.10, ], 'model' : 'none', 'type' : 'log'},
-'log2' : {'prms' : [.30, ], 'model' : 'none', 'type' : 'log'},
-'log3' : {'prms' : [.010, ], 'model' : 'none', 'type' : 'log'},
-'log4' : {'prms' : [.040, ], 'model' : 'none', 'type' : 'log'},
-'log5' : {'prms' : [.00100, ], 'model' : 'none', 'type' : 'log'}
+'svm1' : {'prms' : [9, 'rbf' ], 'model' : 'none', 'type' : 'svm'},
+'svm2' : {'prms' : [11, 'rbf'  ], 'model' : 'none', 'type' : 'svm'},
+'svm3' : {'prms' : [13, 'rbf'  ], 'model' : 'none', 'type' : 'svm'},
+'svm4' : {'prms' : [15, 'rbf' ], 'model' : 'none', 'type' : 'svm'},
+'svm5' : {'prms' : [17, 'rbf' ], 'model' : 'none', 'type' : 'svm'}
 }
 
-mods = {
-'svm1' : {'prms' : [3, ], 'model' : 'none', 'type' : 'svm'},
-'svm2' : {'prms' : [4, ], 'model' : 'none', 'type' : 'svm'},
-'svm3' : {'prms' : [5, ], 'model' : 'none', 'type' : 'svm'},
-'svm4' : {'prms' : [6, ], 'model' : 'none', 'type' : 'svm'},
-'svm5' : {'prms' : [7, ], 'model' : 'none', 'type' : 'svm'}
-}
-
-"""
-mods = {
-'xbm' : {'prms' : {"objective" : "multi:softprob",
-                   "eval_metric" : "mlogloss",
-                   "num_class" : 9,
-                   "nthread" : 7},
-        'model' : 'none',
-        'type' : 'xbm'}
-} """
- 
 # load data with simple cleaning
 df_train = prep_data(PATH+PATH2+"../01 Raw Datasets/", "train.csv")
 df_test = prep_data(PATH+PATH2+"../01 Raw Datasets/", "test.csv", is_train=0)
 # build variables
 df_train = build_Otto_vars(df_train)
 df_test = build_Otto_vars(df_test)
-# select features
-
-
-
 Xfeats = select_feats(df_train, "target_num")
 # fit models  
 fit_models = baseline_models(df_train, Xfeats, mods, target='target_num')
-# evaluate models to kick it very poor ones
 best_mods = evaluate_models(df_train, fit_models, Xfeats, target="target_num")
 # blend models
 eval_blend_best(df_train, best_mods, target='target_num')
 # Create submission
-create_subm(best_mods, df_test, Xfeats, PATH + SUBM_PATH, 'third real subm')
+create_subm(best_mods, df_test, Xfeats, PATH + SUBM_PATH, 'sixth svm')
 
-df_train[Xfeats].apply(pd.Series.value_counts, axis=1)
-.apply(lambda x: )
+# Blend submission
+targets = ["Class_1", "Class_2", "Class_3", "Class_4", "Class_5",
+           "Class_6", "Class_7", "Class_8", "Class_9"]
+subms = {'third svm': .25, 'fourth svm': .25,
+         'fifth svm': .25, 'sixth svm': .25}
+blend_subs(subms, PATH+SUBM_PATH, 'svm big blended', targets)
 
+        
+    
+    
 
